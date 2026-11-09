@@ -1,0 +1,41 @@
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: studio
+      MYSQL_USER: studio
+      MYSQL_PASSWORD: studio
+      MYSQL_ROOT_PASSWORD: localroot
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backend/src/main/resources/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -plocalroot --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  backend:
+    build: ./backend
+    environment:
+      DB_URL: jdbc:mysql://db:3306/studio?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC
+      DB_USER: studio
+      DB_PASSWORD: studio
+      UPLOAD_DIR: /data/uploads
+      STEP_MS: ${STEP_MS:-3000}
+      FAIL_STAGE: ${FAIL_STAGE:-NONE}
+    volumes:
+      - upload_data:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_URL: http://backend:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+volumes:
+  db_data:
+  upload_data:
