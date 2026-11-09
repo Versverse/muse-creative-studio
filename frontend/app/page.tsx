@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { isActive, stageLabel, statusLabel } from "../lib/status.mjs";
 import { taskStateReducer } from "../lib/task-state.mjs";
+import { uploadTask } from "../lib/upload-task.mjs";
 type Template = {
   id: string;
   title: string;
@@ -45,7 +46,10 @@ export default function Home() {
   const [listError, setListError] = useState("");
   const [files, setFiles] = useState<(File | null)[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitPhase, setSubmitPhase] = useState<
+    "idle" | "uploading" | "submitting"
+  >("idle");
+  const submitting = submitPhase !== "idle";
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [showHistory, setShowHistory] = useState(false);
@@ -122,7 +126,7 @@ export default function Home() {
     if (!selected || files.some((f) => !f) || submitting) return;
     const requestUser = user;
     const requestRevision = filesRevision.current;
-    setSubmitting(true);
+    setSubmitPhase("uploading");
     setError("");
     try {
       const body = new FormData();
@@ -130,13 +134,9 @@ export default function Home() {
       files.forEach((f) => {
         if (f) body.append("files", f);
       });
-      const r = await fetch("/api/tasks", {
-        method: "POST",
-        headers: { "X-User": user },
-        body,
-      });
-      if (!r.ok) throw Error(await getError(r));
-      const created: Task = await r.json();
+      const created = await uploadTask<Task>(body, requestUser, () =>
+        setSubmitPhase("submitting"),
+      );
       if (userRef.current !== requestUser) return;
       dispatchTasks({ type: "created", user: requestUser, task: created });
       if (
@@ -153,7 +153,7 @@ export default function Home() {
       )
         setError(e instanceof Error ? e.message : "提交失败，请重试");
     } finally {
-      setSubmitting(false);
+      setSubmitPhase("idle");
     }
   }
   const categories = [
@@ -413,7 +413,11 @@ export default function Home() {
                     disabled={submitting || files.some((f) => !f)}
                     onClick={submit}
                   >
-                    {submitting ? "上传并提交中…" : "开始制作 →"}
+                    {submitPhase === "uploading"
+                      ? "图片上传中…"
+                      : submitPhase === "submitting"
+                        ? "正在提交任务…"
+                        : "开始制作 →"}
                   </button>
                   <p className="fine">模拟制作不会调用真实 AI 服务</p>
                 </section>
