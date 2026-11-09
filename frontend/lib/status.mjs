@@ -1,8 +1,5 @@
 export const isActive = (task) =>
   task.status === "WAITING" || task.status === "PROCESSING";
-export function mergeQueryFailure(tasks) {
-  return tasks;
-}
 export const statusLabel = (status) =>
   ({
     WAITING: "等待处理",

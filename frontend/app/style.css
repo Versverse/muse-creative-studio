@@ -670,3 +670,9 @@ footer {
     height: 160px;
   }
 }
+
+/* The file input is visually hidden, so its container shows keyboard focus. */
+.upload:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}

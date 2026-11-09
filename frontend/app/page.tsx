@@ -1,11 +1,7 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  isActive,
-  mergeQueryFailure,
-  stageLabel,
-  statusLabel,
-} from "../lib/status.mjs";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { isActive, stageLabel, statusLabel } from "../lib/status.mjs";
+import { taskStateReducer } from "../lib/task-state.mjs";
 type Template = {
   id: string;
   title: string;
@@ -38,18 +34,24 @@ export default function Home() {
   const [selected, setSelected] = useState<Template | null>(null);
   const [category, setCategory] = useState("全部");
   const [user, setUser] = useState("demo-a");
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [taskState, dispatchTasks] = useReducer(taskStateReducer<Task>, {
+    user: "demo-a",
+    tasks: [],
+    queryError: "",
+    loading: true,
+  });
+  const { tasks, queryError, loading: tasksLoading } = taskState;
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState("");
-  const [queryError, setQueryError] = useState("");
   const [files, setFiles] = useState<(File | null)[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [showHistory, setShowHistory] = useState(false);
-  const activeRef = useRef(false);
   const userRef = useRef(user);
+  const selectedRef = useRef<Template | null>(null);
+  const filesRevision = useRef(0);
   useEffect(() => {
     fetch("/api/templates")
       .then(async (r) => {
@@ -69,9 +71,7 @@ export default function Home() {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
-    setTasks([]);
-    setQueryError("");
-    activeRef.current = false;
+    dispatchTasks({ type: "loading", user });
     async function query() {
       try {
         const r = await fetch("/api/tasks", {
@@ -82,14 +82,11 @@ export default function Home() {
         if (!r.ok) throw Error(await getError(r));
         const data: Task[] = await r.json();
         if (cancelled) return;
-        setTasks(data);
-        setQueryError("");
-        activeRef.current = data.some(isActive);
-        if (activeRef.current) timer = setTimeout(query, 2000);
+        dispatchTasks({ type: "loaded", user, tasks: data });
+        if (data.some(isActive)) timer = setTimeout(query, 2000);
       } catch {
         if (cancelled) return;
-        setTasks((old) => mergeQueryFailure(old));
-        setQueryError("暂时无法查询任务，已保留当前记录。");
+        dispatchTasks({ type: "queryFailed", user });
       }
     }
     query();
@@ -100,6 +97,8 @@ export default function Home() {
     };
   }, [user, refreshKey]);
   const choose = useCallback((t: Template) => {
+    selectedRef.current = t;
+    filesRevision.current += 1;
     setSelected(t);
     setFiles(Array(t.requiredImageCount).fill(null));
     setError("");
@@ -109,18 +108,20 @@ export default function Home() {
     if (
       file &&
       (!["image/jpeg", "image/png"].includes(file.type) ||
-        file.size > 5 * 1024 * 1024 ||
+        file.size > (selected?.maxFileSizeBytes ?? 5 * 1024 * 1024) ||
         file.size === 0)
     ) {
       setError("请选择 5MB 以内的 JPG 或 PNG 图片。");
       return;
     }
     setError("");
+    filesRevision.current += 1;
     setFiles((old) => old.map((f, i) => (i === index ? file : f)));
   }
   async function submit() {
     if (!selected || files.some((f) => !f) || submitting) return;
     const requestUser = user;
+    const requestRevision = filesRevision.current;
     setSubmitting(true);
     setError("");
     try {
@@ -137,11 +138,19 @@ export default function Home() {
       if (!r.ok) throw Error(await getError(r));
       const created: Task = await r.json();
       if (userRef.current !== requestUser) return;
-      setTasks((old) => [created, ...old]);
-      setFiles(Array(selected.requiredImageCount).fill(null));
+      dispatchTasks({ type: "created", user: requestUser, task: created });
+      if (
+        selectedRef.current?.id === selected.id &&
+        filesRevision.current === requestRevision
+      ) {
+        setFiles(Array(selected.requiredImageCount).fill(null));
+      }
       setRefreshKey((k) => k + 1);
     } catch (e) {
-      if (userRef.current === requestUser)
+      if (
+        userRef.current === requestUser &&
+        selectedRef.current?.id === selected.id
+      )
         setError(e instanceof Error ? e.message : "提交失败，请重试");
     } finally {
       setSubmitting(false);
@@ -157,6 +166,7 @@ export default function Home() {
         <button
           className="brand"
           onClick={() => {
+            selectedRef.current = null;
             setSelected(null);
             setShowHistory(false);
           }}
@@ -171,6 +181,7 @@ export default function Home() {
           <button
             className={!selected && !showHistory ? "navActive" : ""}
             onClick={() => {
+              selectedRef.current = null;
               setSelected(null);
               setShowHistory(false);
             }}
@@ -180,6 +191,7 @@ export default function Home() {
           <button
             className={showHistory ? "navActive" : ""}
             onClick={() => {
+              selectedRef.current = null;
               setSelected(null);
               setShowHistory(true);
             }}
@@ -194,6 +206,7 @@ export default function Home() {
             value={user}
             onChange={(e) => {
               userRef.current = e.target.value;
+              dispatchTasks({ type: "switchUser", user: e.target.value });
               setUser(e.target.value);
             }}
           >
@@ -267,6 +280,8 @@ export default function Home() {
                   {listError}
                   <button onClick={() => location.reload()}>重新加载</button>
                 </p>
+              ) : templates.length === 0 ? (
+                <p className="notice">暂无可用模板，请稍后再来。</p>
               ) : (
                 <div className="grid">
                   {templates
@@ -304,6 +319,7 @@ export default function Home() {
             <div className="backRow">
               <button
                 onClick={() => {
+                  selectedRef.current = null;
                   setSelected(null);
                   setShowHistory(false);
                 }}
@@ -427,7 +443,12 @@ export default function Home() {
                     </button>
                   </div>
                 )}
-                {tasks.length === 0 ? (
+                {tasks.length === 0 && tasksLoading ? (
+                  <p className="notice" role="status">
+                    正在加载制作记录…
+                  </p>
+                ) : tasks.length === 0 && queryError ? null : tasks.length ===
+                  0 ? (
                   <div className="empty">
                     <span>✳</span>
                     <h3>这里还没有作品</h3>

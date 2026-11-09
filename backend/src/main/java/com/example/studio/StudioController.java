@@ -76,7 +76,9 @@ class StudioController {
             h.length == 8 && Arrays.equals(h, new byte[] {(byte) 137, 80, 78, 71, 13, 10, 26, 10});
         boolean jpg =
             h.length >= 3 && (h[0] & 255) == 255 && (h[1] & 255) == 216 && (h[2] & 255) == 255;
-        if (!png && !jpg) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "图片内容格式无效");
+        if (("image/png".equals(f.getContentType()) && !png)
+            || ("image/jpeg".equals(f.getContentType()) && !jpg))
+          throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "图片内容与声明的格式不一致");
       }
     }
     List<Path> saved = new ArrayList<>();
@@ -86,8 +88,8 @@ class StudioController {
         String name =
             UUID.randomUUID() + ("image/png".equals(f.getContentType()) ? ".png" : ".jpg");
         Path path = dir.resolve(name);
-        f.transferTo(path);
         saved.add(path);
+        f.transferTo(path);
         urls.add("/uploads/" + name);
       }
       Task task = new Task();
@@ -99,7 +101,7 @@ class StudioController {
       task.stage = "WAITING";
       task.inputs = String.join(",", urls);
       mapper.insert(task);
-      processor.submit(task);
+      processor.submit(new Task(task));
       return ResponseEntity.status(HttpStatus.ACCEPTED).body(task);
     } catch (Exception e) {
       for (Path path : saved) Files.deleteIfExists(path);

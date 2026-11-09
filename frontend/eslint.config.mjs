@@ -4,7 +4,9 @@ import path from "node:path";
 const compat = new FlatCompat({
   baseDirectory: path.dirname(fileURLToPath(import.meta.url)),
 });
-export default [
+const config = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   { ignores: [".next/**", "node_modules/**", "studio/**", "next-env.d.ts"] },
 ];
+
+export default config;

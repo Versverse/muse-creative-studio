@@ -1,16 +1,61 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isActive, mergeQueryFailure } from "../lib/status.mjs";
-test("only unfinished tasks trigger polling", () => {
-  assert.equal(isActive({ status: "WAITING" }), true);
-  assert.equal(isActive({ status: "PROCESSING" }), true);
-  assert.equal(isActive({ status: "SUCCESS" }), false);
-  assert.equal(isActive({ status: "FAILED" }), false);
+import { isActive } from "../lib/status.mjs";
+import { taskStateReducer as reduce } from "../lib/task-state.mjs";
+
+test("only unfinished tasks need polling", () => {
+  assert.deepEqual(
+    ["WAITING", "PROCESSING", "SUCCESS", "FAILED"].map((status) =>
+      isActive({ status }),
+    ),
+    [true, true, false, false],
+  );
 });
-test("query errors preserve each task and do not mark it failed", () => {
-  const items = [
-    { id: "1", status: "PROCESSING" },
-    { id: "2", status: "SUCCESS" },
+
+test("refresh and failed query retain all tasks and their independent statuses", () => {
+  const tasks = [
+    { id: "a", status: "PROCESSING", stage: "GENERATE" },
+    { id: "b", status: "SUCCESS" },
+    { id: "c", status: "FAILED", error: "模拟失败" },
   ];
-  assert.deepEqual(mergeQueryFailure(items), items);
+  let state = { user: "demo-a", tasks, queryError: "", loading: false };
+  state = reduce(state, { type: "loading", user: "demo-a" });
+  assert.deepEqual(state.tasks, tasks);
+  state = reduce(state, { type: "queryFailed", user: "demo-a" });
+  assert.deepEqual(state.tasks, tasks);
+  assert.match(state.queryError, /无法查询/);
+  const updated = [{ ...tasks[0], status: "SUCCESS" }, tasks[1], tasks[2]];
+  state = reduce(state, { type: "loaded", user: "demo-a", tasks: updated });
+  assert.deepEqual(state.tasks, updated);
+  assert.equal(state.queryError, "");
+});
+
+test("switching users discards stale responses and accepts the new user's tasks", () => {
+  let state = {
+    user: "demo-a",
+    tasks: [{ id: "a", status: "PROCESSING" }],
+    queryError: "",
+    loading: false,
+  };
+  state = reduce(state, { type: "switchUser", user: "demo-b" });
+  state = reduce(state, {
+    type: "loaded",
+    user: "demo-a",
+    tasks: [{ id: "old", status: "SUCCESS" }],
+  });
+  state = reduce(state, {
+    type: "created",
+    user: "demo-a",
+    task: { id: "late", status: "WAITING" },
+  });
+  assert.deepEqual(state.tasks, []);
+  state = reduce(state, {
+    type: "loaded",
+    user: "demo-b",
+    tasks: [{ id: "b", status: "WAITING" }],
+  });
+  assert.deepEqual(
+    state.tasks.map((t) => t.id),
+    ["b"],
+  );
 });
